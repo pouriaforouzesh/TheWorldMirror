@@ -173,7 +173,7 @@ const VideoGenerator: React.FC = () => {
 
     useEffect(() => {
         const checkApiKey = async () => {
-            if ((window as any).aistudio && await (window as any).aistudio.hasSelectedApiKey()) {
+            if (window.aistudio && await window.aistudio.hasSelectedApiKey()) {
                 setApiKeySelected(true);
             }
         };
@@ -194,8 +194,8 @@ const VideoGenerator: React.FC = () => {
     }, [isLoading]);
 
     const handleSelectKey = async () => {
-        if ((window as any).aistudio) {
-            await (window as any).aistudio.openSelectKey();
+        if (window.aistudio) {
+            await window.aistudio.openSelectKey();
             // Assume success to avoid race condition and allow user to proceed.
             setApiKeySelected(true);
         }

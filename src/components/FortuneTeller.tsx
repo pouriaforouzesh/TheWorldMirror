@@ -71,7 +71,7 @@ const FortuneTeller: React.FC = () => {
         setShowWelcome(true);
     }
     const checkApiKey = async () => {
-        if ((window as any).aistudio && await (window as any).aistudio.hasSelectedApiKey()) {
+        if (window.aistudio && await window.aistudio.hasSelectedApiKey()) {
             setApiKeySelected(true);
         }
     };
@@ -590,8 +590,8 @@ const FortuneTeller: React.FC = () => {
 
 
   const handleSelectKey = async () => {
-    if ((window as any).aistudio) {
-        await (window as any).aistudio.openSelectKey();
+    if (window.aistudio) {
+        await window.aistudio.openSelectKey();
         setApiKeySelected(true); // Assume success
     }
   };
