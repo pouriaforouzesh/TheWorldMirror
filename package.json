@@ -4,8 +4,7 @@
   "private": true,
   "description": "An AI-powered application for personalized fortune readings.",
   "scripts": {
-    "dev": "echo 'Run locally using Vercel CLI: vercel dev'",
-    "build": "echo 'Vercel will handle the build process automatically.'"
+    "dev": "echo 'Run locally using Vercel CLI: vercel dev'"
   },
   "dependencies": {
     "@google/genai": "^1.29.0",
