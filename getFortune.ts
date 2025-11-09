@@ -26,12 +26,13 @@ export default async function handler(
 
     // Securely get the API key from Vercel's environment variables
 	
-	const apiKey = import.meta.env.VITE_API_KEY;
-	if (!apiKey) {
-      throw new Error("VITE_API_KEY environment variable not set");
+	const apiKey = process.env.API_KEY;
+    if (!apiKey) {
+      return res.status(500).json({ message: 'API key not configured on the server' });
     }
 
-    const genAI = new GoogleGenerativeAI(apiKey);
+    const ai = new GoogleGenAI({ apiKey });
+
 
 
     
