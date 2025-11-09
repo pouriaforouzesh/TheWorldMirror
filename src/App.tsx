@@ -1,11 +1,17 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import FortuneTeller from './components/FortuneTeller';
+import CreativeStudio from './components/CreativeStudio';
+import Converse from './components/Converse';
+import MediaAnalyzer from './components/MediaAnalyzer';
 import { CelestialIcon } from './constants';
 import { LanguageContext } from './LanguageContext';
 import { translations } from './translations';
 
+type ActiveApp = 'fortune' | 'creative' | 'converse' | 'analyzer';
+
 const App: React.FC = () => {
   const [language, setLanguage] = useState(localStorage.getItem('language') || 'en');
+  const [activeApp, setActiveApp] = useState<ActiveApp>('fortune');
 
   useEffect(() => {
     localStorage.setItem('language', language);
@@ -25,6 +31,15 @@ const App: React.FC = () => {
   };
   
   const contextValue = useMemo(() => ({ language, setLanguage, t }), [language]);
+  
+  const NavButton = ({ app, label }: { app: ActiveApp, label: string }) => (
+    <button 
+      onClick={() => setActiveApp(app)}
+      className={`px-4 py-2 text-sm font-medium rounded-t-lg transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-indigo-400 ${activeApp === app ? 'bg-slate-800/50 border-b-2 border-indigo-400 text-white' : 'text-slate-400 hover:bg-slate-700/50'}`}
+    >
+        {label}
+    </button>
+  );
 
   return (
     <LanguageContext.Provider value={contextValue}>
@@ -57,7 +72,7 @@ const App: React.FC = () => {
                   <option value="zh">中文 (简体)</option>
                   <option value="ja">日本語</option>
                   <option value="pt">Português</option>
-                  <option value="mr">مراठी</option>
+                  <option value="mr">मराठी</option>
                 </select>
                 <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-2 text-slate-400">
                     <svg className="fill-current h-4 w-4" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20"><path d="M9.293 12.95l.707.707L15.657 8l-1.414-1.414L10 10.828 5.757 6.586 4.343 8z"/></svg>
@@ -68,8 +83,20 @@ const App: React.FC = () => {
         </header>
 
         <main className="container mx-auto p-4 sm:p-6 lg:p-8">
+            <div className="border-b border-slate-700 mb-8">
+                <nav className="flex space-x-2" aria-label="Tabs">
+                    <NavButton app="fortune" label="Celestial Reading" />
+                    <NavButton app="creative" label="Creative Studio" />
+                    <NavButton app="converse" label="Converse with AI" />
+                    <NavButton app="analyzer" label="Media Analyzer" />
+                </nav>
+            </div>
+
           <div className="animate-fade-in-up">
-            <FortuneTeller />
+            {activeApp === 'fortune' && <FortuneTeller />}
+            {activeApp === 'creative' && <CreativeStudio />}
+            {activeApp === 'converse' && <Converse />}
+            {activeApp === 'analyzer' && <MediaAnalyzer />}
           </div>
         </main>
         
