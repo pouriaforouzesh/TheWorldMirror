@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>The World Mirror</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+      body {
+        background-color: #090a0f;
+        background-image: radial-gradient(ellipse at 50% 0%, #1b2735 0%, #090a0f 100%);
+        min-height: 100vh;
+      }
+      @keyframes fade-in-up {
+        from { opacity: 0; transform: translateY(20px); }
+        to { opacity: 1; transform: translateY(0); }
+      }
+      .animate-fade-in-up {
+        animation: fade-in-up 0.5s ease-out forwards;
+      }
+
+      /* Cosmic Implode Animation */
+      @keyframes cosmic-implode {
+        from {
+          opacity: 1;
+          transform: scale(1);
+        }
+        to {
+          opacity: 0;
+          transform: scale(0.1);
+        }
+      }
+      .animate-cosmic-implode {
+        animation: cosmic-implode 0.5s cubic-bezier(0.68, -0.55, 0.27, 1.55) forwards;
+      }
+
+      /* Sparkle Effect */
+      .sparkle {
+        position: absolute;
+        width: 4px;
+        height: 4px;
+        background: #fff;
+        border-radius: 50%;
+        opacity: 0;
+        animation: sparkle-burst 0.8s ease-out forwards;
+        box-shadow: 0 0 5px #fff, 0 0 10px #fff, 0 0 15px #f0f;
+      }
+
+      @keyframes sparkle-burst {
+        0% {
+          opacity: 1;
+          transform: scale(0.3);
+        }
+        100% {
+          opacity: 0;
+          transform: scale(1.5) translate(var(--tx, 0), var(--ty, 0));
+        }
+      }
+    </style>
+  <script type="importmap">
+{
+  "imports": {
+    "react": "https://aistudiocdn.com/react@^19.2.0",
+    "react-dom/": "https://aistudiocdn.com/react-dom@^19.2.0/",
+    "react/": "https://aistudiocdn.com/react@^19.2.0/",
+    "@google/genai": "https://aistudiocdn.com/@google/genai@^1.29.0"
+  }
+}
+</script>
+</head>
+  <body class="text-white">
+    <div id="root"></div>
+    <script type="module" src="/index.tsx"></script>
+  </body>
+</html>

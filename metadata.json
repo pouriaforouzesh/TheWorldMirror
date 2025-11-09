@@ -1,0 +1,8 @@
+{
+  "name": "Celestial Fortune AI deploy",
+  "description": "An all-in-one AI-powered application that provides personalized fortune readings based on your birth date, reads your destiny from your palm or face, and generates stunning visuals of your guardian angel. It also includes advanced features like real-time conversations with AI, video and image generation, media analysis, and grounded search capabilities, all powered by the Gemini API.",
+  "requestFramePermissions": [
+    "microphone",
+    "geolocation"
+  ]
+}
