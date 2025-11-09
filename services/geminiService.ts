@@ -2,13 +2,28 @@
 import { GoogleGenAI, GenerateContentResponse, Modality, Operation, GenerateImagesResponse, GenerateContentParameters } from "@google/genai";
 import { MODELS } from '../constants';
 
-const getAiClient = () => {
-    // We create a new client for each call to ensure the most recent API key is used,
-    // especially important for Veo video generation where the key might be selected mid-session.
-    if (!process.env.API_KEY) {
-        throw new Error("API_KEY environment variable not set");
+// Helper to call our secure proxy endpoint
+const callProxy = async (operation: string, params: any): Promise<any> => {
+    // For fetching video, we expect a Blob, not JSON
+    const isFetchingVideo = operation === 'fetchVideo';
+
+    const response = await fetch('/api/gemini', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ operation, params }),
+    });
+
+    if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ message: 'An unknown server error occurred.' }));
+        // Re-throw in a way that withRetry can understand, mimicking the original error format
+        throw new Error(JSON.stringify({ error: { status: 'PROXY_ERROR', message: errorData.message } }));
     }
-    return new GoogleGenAI({ apiKey: process.env.API_KEY });
+    
+    if (isFetchingVideo) {
+        return response.blob();
+    }
+    
+    return response.json();
 };
 
 const withRetry = <T extends (...args: any[]) => Promise<any>>(fn: T): T => {
@@ -26,6 +41,10 @@ const withRetry = <T extends (...args: any[]) => Promise<any>>(fn: T): T => {
                     // The error message from the SDK is often a JSON string of the API response
                     errorJson = JSON.parse(err.message);
                 } catch (e) {
+                    // Check if it's a fetch error from our proxy
+                    if(err.message?.includes("Failed to fetch")) {
+                         throw new Error("The model is currently overloaded. Please try again later.");
+                    }
                     // If parsing fails, it's not the error we're looking for, rethrow
                     throw err;
                 }
@@ -72,41 +91,39 @@ const withRetry = <T extends (...args: any[]) => Promise<any>>(fn: T): T => {
     }) as T;
 };
 
-// Fortune Telling
+
+// --- ALL SERVICES NOW PROXIED ---
+
+// Fortune Telling (Birth Date)
 export const getFortune = withRetry(async (prompt: string): Promise<GenerateContentResponse> => {
-    const ai = getAiClient();
-    return ai.models.generateContent({
+    return callProxy('generateContent', {
         model: MODELS.FLASH,
         contents: prompt,
     });
 });
 
+// Fortune Telling (Image)
 export const readPalmOrFace = withRetry(async (imageBase64: string, mimeType: string, prompt: string): Promise<GenerateContentResponse> => {
-    const ai = getAiClient();
-    const imagePart = {
-        inlineData: { data: imageBase64, mimeType },
-    };
-    const textPart = {
-        text: prompt
-    };
-    return ai.models.generateContent({
-        model: MODELS.FLASH,
+    const imagePart = { inlineData: { data: imageBase64, mimeType } };
+    const textPart = { text: prompt };
+    return callProxy('generateContent', {
+        model: MODELS.FLASH, // Using FLASH for consistency with text-based fortune
         contents: { parts: [imagePart, textPart] },
     });
 });
 
 export const generateImage = withRetry(async (prompt: string, aspectRatio: string): Promise<GenerateImagesResponse> => {
-    const ai = getAiClient();
+    const params = {
+        model: MODELS.IMAGEN,
+        prompt: prompt,
+        config: {
+            numberOfImages: 1,
+            outputMimeType: 'image/jpeg',
+            aspectRatio: aspectRatio,
+        },
+    };
     try {
-        return await ai.models.generateImages({
-            model: MODELS.IMAGEN,
-            prompt: prompt,
-            config: {
-                numberOfImages: 1,
-                outputMimeType: 'image/jpeg',
-                aspectRatio: aspectRatio,
-            },
-        });
+        return await callProxy('generateImages', params);
     } catch(err: any) {
         if (err.message?.includes("only accessible to billed users")) {
             throw new Error("IMAGEN_BILLING_REQUIRED");
@@ -116,8 +133,7 @@ export const generateImage = withRetry(async (prompt: string, aspectRatio: strin
 });
 
 export const generateImageWithFlash = withRetry(async (prompt: string): Promise<GenerateContentResponse> => {
-    const ai = getAiClient();
-    return ai.models.generateContent({
+    return callProxy('generateContent', {
         model: MODELS.FLASH_IMAGE,
         contents: {
             parts: [{ text: prompt }],
@@ -129,8 +145,7 @@ export const generateImageWithFlash = withRetry(async (prompt: string): Promise<
 });
 
 export const generateVideo = withRetry(async (prompt: string, aspectRatio: string, image?: { base64: string; mimeType: string }): Promise<Operation> => {
-    const ai = getAiClient();
-    const requestPayload: any = {
+    const params: any = {
         model: MODELS.VEO,
         prompt: prompt,
         config: {
@@ -140,23 +155,24 @@ export const generateVideo = withRetry(async (prompt: string, aspectRatio: strin
         }
     };
     if (image) {
-        requestPayload.image = {
+        params.image = {
             imageBytes: image.base64,
             mimeType: image.mimeType,
         };
     }
-    return ai.models.generateVideos(requestPayload);
+    return callProxy('generateVideos', params);
 });
 
 export const checkVideoStatus = withRetry(async (operation: Operation): Promise<Operation> => {
-    const ai = getAiClient();
-    return ai.operations.getVideosOperation({ operation: operation });
+    return callProxy('getVideosOperation', { operation: operation });
 });
 
+export const fetchVideoBlob = withRetry(async (url: string): Promise<Blob> => {
+    return callProxy('fetchVideo', { url });
+});
 
 export const textToSpeech = withRetry(async (text: string): Promise<GenerateContentResponse> => {
-    const ai = getAiClient();
-    return ai.models.generateContent({
+    return callProxy('generateContent', {
         model: MODELS.TTS,
         contents: [{ parts: [{ text }] }],
         config: {
@@ -170,25 +186,21 @@ export const textToSpeech = withRetry(async (text: string): Promise<GenerateCont
     });
 });
 
-// For Premium Advice
 export const getDailyAdvice = withRetry(async (prompt: string): Promise<GenerateContentResponse> => {
-    const ai = getAiClient();
-    return ai.models.generateContent({
-        model: MODELS.FLASH, // Changed to Flash to be more lenient on free tier quotas
+    return callProxy('generateContent', {
+        model: MODELS.FLASH,
         contents: prompt,
     });
 });
 
-// Fix: Add editImage function for Creative Studio
 export const editImage = withRetry(async (imageBase64: string, mimeType: string, prompt: string): Promise<GenerateContentResponse> => {
-    const ai = getAiClient();
     const imagePart = {
         inlineData: { data: imageBase64, mimeType },
     };
     const textPart = {
         text: prompt
     };
-    return ai.models.generateContent({
+    return callProxy('generateContent', {
         model: MODELS.FLASH_IMAGE,
         contents: { parts: [imagePart, textPart] },
         config: {
@@ -197,22 +209,19 @@ export const editImage = withRetry(async (imageBase64: string, mimeType: string,
     });
 });
 
-// Fix: Add analyzeVideo function for Media Analyzer
 export const analyzeVideo = withRetry(async (videoBase64: string, mimeType: string, prompt: string): Promise<GenerateContentResponse> => {
-    const ai = getAiClient();
     const videoPart = {
         inlineData: { data: videoBase64, mimeType },
     };
     const textPart = {
         text: prompt
     };
-    return ai.models.generateContent({
+    return callProxy('generateContent', {
         model: MODELS.PRO, // Gemini Pro supports video analysis
         contents: { parts: [videoPart, textPart] },
     });
 });
 
-// Fix: Add sendMessageToChatbot for Converse component
 export const sendMessageToChatbot = withRetry(async (
     prompt: string,
     useGrounding: boolean,
@@ -221,7 +230,6 @@ export const sendMessageToChatbot = withRetry(async (
     latitude?: number,
     longitude?: number
 ): Promise<GenerateContentResponse> => {
-    const ai = getAiClient();
     const request: GenerateContentParameters = {
         model: MODELS.PRO,
         contents: prompt,
@@ -255,5 +263,12 @@ export const sendMessageToChatbot = withRetry(async (
         };
     }
 
-    return ai.models.generateContent(request);
+    return callProxy('generateContent', request);
+});
+
+export const transcribeAudio = withRetry(async (audioBase64: string, mimeType: string): Promise<GenerateContentResponse> => {
+    return callProxy('generateContent', {
+        model: MODELS.FLASH,
+        contents: { parts: [{inlineData: {data: audioBase64, mimeType}}, {text: 'Transcribe this audio.'}] }
+    });
 });

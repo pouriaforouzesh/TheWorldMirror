@@ -1,8 +1,7 @@
-
 import React, { useState, useEffect } from 'react';
 import Spinner from './common/Spinner';
 import FileUpload from './common/FileUpload';
-import { generateImage, editImage, generateVideo, checkVideoStatus } from '../services/geminiService';
+import { generateImage, editImage, generateVideo, checkVideoStatus, fetchVideoBlob } from '../services/geminiService';
 import { fileToBase64 } from '../utils/helpers';
 import { VEO_LOADING_MESSAGES, ASPECT_RATIOS, VIDEO_ASPECT_RATIOS } from '../constants';
 import { Operation } from '@google/genai';
@@ -66,8 +65,12 @@ const ImageGenerator: React.FC = () => {
             } else {
                 setError('Could not generate image. Please try a different prompt.');
             }
-        } catch (err) {
-            setError('An error occurred. Please try again.');
+        } catch (err: any) {
+             if (err.message === "IMAGEN_BILLING_REQUIRED") {
+                setError("Image generation for this model requires a billed account. Please check your API key's settings.");
+            } else {
+                setError('An error occurred. Please try again.');
+            }
             console.error(err);
         } finally {
             setIsLoading(false);
@@ -223,13 +226,9 @@ const VideoGenerator: React.FC = () => {
             }
             
             const downloadLink = operation.response?.generatedVideos?.[0]?.video?.uri;
-            if (downloadLink && process.env.API_KEY) {
-                // In a real app, fetching the blob and creating an Object URL is safer.
-                // For simplicity here, we append the key, assuming direct browser access is possible.
-                const response = await fetch(`${downloadLink}&key=${process.env.API_KEY}`);
-                const blob = await response.blob();
+            if (downloadLink) {
+                const blob = await fetchVideoBlob(downloadLink);
                 setVideoUrl(URL.createObjectURL(blob));
-
             } else {
                 throw new Error("Video generation completed, but no download link was found.");
             }

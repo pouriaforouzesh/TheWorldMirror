@@ -1,11 +1,7 @@
-
-import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { GoogleGenAI, LiveSession, LiveServerMessage, Modality } from '@google/genai';
-import { sendMessageToChatbot } from '../services/geminiService';
-import { createPcmBlob, decode, decodeAudioData } from '../utils/helpers';
+import React, { useState, useRef, useEffect } from 'react';
+import { sendMessageToChatbot, transcribeAudio } from '../services/geminiService';
 import Spinner from './common/Spinner';
 import { ChatMessage } from '../types';
-import { MODELS } from '../constants';
 import useGeolocation from '../hooks/useGeolocation';
 
 
@@ -47,132 +43,24 @@ const Converse: React.FC = () => {
 
 
 const LiveChat: React.FC = () => {
-    const [isSessionActive, setIsSessionActive] = useState(false);
-    const [transcription, setTranscription] = useState<Array<{speaker: 'user' | 'model', text: string}>>([]);
-    const [error, setError] = useState<string|null>(null);
-    
-    const sessionPromiseRef = useRef<Promise<LiveSession> | null>(null);
-    const audioContextRef = useRef<AudioContext | null>(null);
-    const outputAudioContextRef = useRef<AudioContext | null>(null);
-    const streamRef = useRef<MediaStream | null>(null);
-    const processorRef = useRef<ScriptProcessorNode | null>(null);
-    const sourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
-
-    const startSession = async () => {
-        setError(null);
-        try {
-            if (!process.env.API_KEY) throw new Error("API key not configured");
-            const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-            
-            streamRef.current = await navigator.mediaDevices.getUserMedia({ audio: true });
-            
-            let currentInput = '';
-            let currentOutput = '';
-            
-            sessionPromiseRef.current = ai.live.connect({
-                model: MODELS.LIVE,
-                config: {
-                    responseModalities: [Modality.AUDIO],
-                    inputAudioTranscription: {},
-                    outputAudioTranscription: {},
-                },
-                callbacks: {
-                    onopen: () => {
-                        setIsSessionActive(true);
-                        audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 16000 });
-                        sourceRef.current = audioContextRef.current.createMediaStreamSource(streamRef.current!);
-                        processorRef.current = audioContextRef.current.createScriptProcessor(4096, 1, 1);
-                        
-                        processorRef.current.onaudioprocess = (e) => {
-                            const inputData = e.inputBuffer.getChannelData(0);
-                            const pcmBlob = createPcmBlob(inputData);
-                            sessionPromiseRef.current?.then((session) => {
-                                session.sendRealtimeInput({ media: pcmBlob });
-                            });
-                        };
-                        
-                        sourceRef.current.connect(processorRef.current);
-                        processorRef.current.connect(audioContextRef.current.destination);
-                    },
-                    onmessage: async (message: LiveServerMessage) => {
-                        if (message.serverContent?.inputTranscription) {
-                            currentInput += message.serverContent.inputTranscription.text;
-                        }
-                        if (message.serverContent?.outputTranscription) {
-                            currentOutput += message.serverContent.outputTranscription.text;
-                        }
-                        if (message.serverContent?.turnComplete) {
-                            setTranscription(prev => [...prev, {speaker: 'user', text: currentInput}, {speaker: 'model', text: currentOutput}]);
-                            currentInput = '';
-                            currentOutput = '';
-                        }
-
-                        const audioData = message.serverContent?.modelTurn?.parts[0]?.inlineData?.data;
-                        if (audioData) {
-                            if (!outputAudioContextRef.current) {
-                                outputAudioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)({sampleRate: 24000});
-                            }
-                            const audioBuffer = await decodeAudioData(decode(audioData), outputAudioContextRef.current, 24000, 1);
-                            const source = outputAudioContextRef.current.createBufferSource();
-                            source.buffer = audioBuffer;
-                            source.connect(outputAudioContextRef.current.destination);
-                            source.start();
-                        }
-                    },
-                    onerror: (e) => {
-                        console.error('Live session error:', e);
-                        setError("A connection error occurred.");
-                        stopSession();
-                    },
-                    onclose: () => {
-                        stopSession();
-                    }
-                }
-            });
-        } catch (err) {
-            console.error(err);
-            setError("Failed to start session. Check microphone permissions.");
-        }
-    };
-
-    const stopSession = useCallback(() => {
-        sessionPromiseRef.current?.then(session => session.close());
-        
-        streamRef.current?.getTracks().forEach(track => track.stop());
-        sourceRef.current?.disconnect();
-        processorRef.current?.disconnect();
-        audioContextRef.current?.close();
-
-        setIsSessionActive(false);
-        sessionPromiseRef.current = null;
-    }, []);
-
-    useEffect(() => {
-      // Cleanup on unmount
-      return () => {
-        if(isSessionActive) {
-          stopSession();
-        }
-      }
-    }, [isSessionActive, stopSession]);
+    // NOTE: The Live API (ai.live.connect) establishes a long-lived, stateful WebSocket-like connection
+    // and cannot be proxied through a standard stateless serverless function like the other API calls in this app.
+    // For security reasons, the API key is not exposed to the client-side. Therefore, this feature is
+    // disabled in this deployment environment. It is intended for demonstration purposes in secure
+    // environments like AI Studio where client-side API key management is handled.
+    const explanation = "The Live Chat feature cannot be used in this web environment due to the technical requirements of establishing a direct, secure connection and the security risks of exposing API keys on the client-side. This feature is for demonstration purposes only.";
 
     return (
         <div className="space-y-4">
-            <div className="flex justify-center">
-            {isSessionActive ? (
-                <button onClick={stopSession} className="bg-red-600 text-white font-bold py-3 px-6 rounded-lg">Stop Conversation</button>
-            ) : (
-                <button onClick={startSession} className="bg-green-600 text-white font-bold py-3 px-6 rounded-lg">Start Conversation</button>
-            )}
+            <div className="text-center p-4 bg-slate-700/50 border border-slate-600 rounded-lg">
+                <h3 className="text-lg font-semibold text-slate-300 mb-2">Live Chat Unavailable</h3>
+                <p className="text-slate-400 text-sm">{explanation}</p>
             </div>
-             {error && <p className="text-red-400 text-center">{error}</p>}
-            <div className="h-64 overflow-y-auto p-4 bg-slate-900 rounded-lg border border-slate-700 space-y-3">
-                {transcription.map((entry, index) => (
-                    <div key={index} className={`flex ${entry.speaker === 'user' ? 'justify-end' : 'justify-start'}`}>
-                        <p className={`max-w-[80%] px-4 py-2 rounded-xl ${entry.speaker === 'user' ? 'bg-indigo-600 text-white' : 'bg-slate-600 text-slate-200'}`}>{entry.text}</p>
-                    </div>
-                ))}
-                {isSessionActive && !transcription.length && <p className="text-slate-400 text-center">Listening...</p>}
+            <div className="flex justify-center">
+                <button disabled className="bg-slate-600 text-slate-400 font-bold py-3 px-6 rounded-lg cursor-not-allowed">Start Conversation</button>
+            </div>
+            <div className="h-64 overflow-y-auto p-4 bg-slate-900 rounded-lg border border-slate-700 flex items-center justify-center">
+                <p className="text-slate-500">Live transcription would appear here.</p>
             </div>
         </div>
     );
@@ -180,8 +68,6 @@ const LiveChat: React.FC = () => {
 
 
 const AudioTranscriber: React.FC = () => {
-    // This is a simplified version. A real implementation would stream audio.
-    // For this app, we'll record a short clip and transcribe.
     const [isRecording, setIsRecording] = useState(false);
     const [transcription, setTranscription] = useState('');
     const [isLoading, setIsLoading] = useState(false);
@@ -190,38 +76,39 @@ const AudioTranscriber: React.FC = () => {
 
     const startRecording = async () => {
         setTranscription('');
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        mediaRecorderRef.current = new MediaRecorder(stream);
-        mediaRecorderRef.current.ondataavailable = e => audioChunksRef.current.push(e.data);
-        mediaRecorderRef.current.onstop = transcribe;
-        audioChunksRef.current = [];
-        mediaRecorderRef.current.start();
-        setIsRecording(true);
+        try {
+            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            mediaRecorderRef.current = new MediaRecorder(stream, { mimeType: 'audio/webm' });
+            mediaRecorderRef.current.ondataavailable = e => audioChunksRef.current.push(e.data);
+            mediaRecorderRef.current.onstop = handleTranscription;
+            audioChunksRef.current = [];
+            mediaRecorderRef.current.start();
+            setIsRecording(true);
+        } catch (err) {
+            console.error("Failed to start recording:", err);
+            setTranscription('Could not start recording. Please check microphone permissions.');
+        }
     };
 
     const stopRecording = () => {
         mediaRecorderRef.current?.stop();
+        // Stop all media tracks to turn off the microphone indicator
+        mediaRecorderRef.current?.stream.getTracks().forEach(track => track.stop());
         setIsRecording(false);
         setIsLoading(true);
     };
     
-    const transcribe = async () => {
+    const handleTranscription = async () => {
         const audioBlob = new Blob(audioChunksRef.current, {type: 'audio/webm'});
         const reader = new FileReader();
         reader.readAsDataURL(audioBlob);
         reader.onloadend = async () => {
             const base64 = (reader.result as string).split(',')[1];
             try {
-                // This is a workaround as Gemini API expects a specific format.
-                // A more robust solution would use a dedicated transcription API or process the audio differently.
-                // For now, we tell Gemini what to do.
-                const ai = new GoogleGenAI({ apiKey: process.env.API_KEY! });
-                const response = await ai.models.generateContent({
-                    model: MODELS.FLASH,
-                    contents: { parts: [{inlineData: {data: base64, mimeType: 'audio/webm'}}, {text: 'Transcribe this audio.'}] }
-                });
+                const response = await transcribeAudio(base64, 'audio/webm');
                 setTranscription(response.text);
             } catch (error) {
+                console.error("Transcription error:", error);
                 setTranscription('Error transcribing audio.');
             } finally {
                 setIsLoading(false);
@@ -231,11 +118,11 @@ const AudioTranscriber: React.FC = () => {
 
     return (
         <div className="space-y-4 text-center">
-            <button onClick={isRecording ? stopRecording : startRecording} className={`font-bold py-3 px-6 rounded-lg text-white ${isRecording ? 'bg-red-500' : 'bg-blue-500'}`}>
+            <button onClick={isRecording ? stopRecording : startRecording} className={`font-bold py-3 px-6 rounded-lg text-white ${isRecording ? 'bg-red-500 animate-pulse' : 'bg-blue-500'}`}>
                 {isRecording ? 'Stop Recording' : 'Start Recording'}
             </button>
             {isLoading && <Spinner text="Transcribing..."/>}
-            {transcription && <p className="p-4 bg-slate-900 rounded-lg">{transcription}</p>}
+            {transcription && <p className="p-4 bg-slate-900 rounded-lg text-left">{transcription}</p>}
         </div>
     );
 };
@@ -285,14 +172,30 @@ const ChatBot: React.FC = () => {
                 {messages.map((msg, index) => (
                     <div key={index} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
                         <div className={`max-w-[85%] px-4 py-2 rounded-xl ${msg.role === 'user' ? 'bg-indigo-600 text-white' : 'bg-slate-600 text-slate-200'}`}>
-                            <p>{msg.text}</p>
+                            <p className="whitespace-pre-wrap">{msg.text}</p>
                             {msg.groundingChunks && msg.groundingChunks.length > 0 && (
                                 <div className="mt-2 pt-2 border-t border-slate-500">
                                     <h4 className="text-xs font-semibold text-slate-300 mb-1">Sources:</h4>
                                     <ul className="text-xs space-y-1">
                                     {msg.groundingChunks.map((chunk, i) => {
                                         const source = chunk.web || chunk.maps;
-                                        return source?.uri ? <li key={i}><a href={source.uri} target="_blank" rel="noreferrer" className="text-indigo-300 hover:underline break-all">{source.title || source.uri}</a></li> : null
+                                        if (!source || !source.uri) return null;
+
+                                        // Handle Maps review snippets
+                                        if (chunk.maps?.placeAnswerSources?.reviewSnippets) {
+                                            return (
+                                                <li key={i}>
+                                                    <a href={source.uri} target="_blank" rel="noreferrer" className="text-indigo-300 hover:underline break-all block">{source.title || 'Google Maps Source'}</a>
+                                                    <ul className="pl-3 list-disc list-inside">
+                                                        {chunk.maps.placeAnswerSources.reviewSnippets.map((snippet: any, j: number) => (
+                                                            <li key={`${i}-${j}`} className="text-slate-400 italic">"{snippet.text}"</li>
+                                                        ))}
+                                                    </ul>
+                                                </li>
+                                            );
+                                        }
+
+                                        return <li key={i}><a href={source.uri} target="_blank" rel="noreferrer" className="text-indigo-300 hover:underline break-all">{source.title || source.uri}</a></li>;
                                     })}
                                     </ul>
                                 </div>

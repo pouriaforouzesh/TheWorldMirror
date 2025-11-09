@@ -1,5 +1,5 @@
 import React, { useState, useRef, useContext, useEffect } from 'react';
-import { getFortune, readPalmOrFace, generateImageWithFlash, textToSpeech, generateVideo, checkVideoStatus, getDailyAdvice } from '../services/geminiService';
+import { getFortune, readPalmOrFace, generateImageWithFlash, textToSpeech, generateVideo, checkVideoStatus, getDailyAdvice, fetchVideoBlob } from '../services/geminiService';
 import { fileToBase64, decode, decodeAudioData, encodeWAV } from '../utils/helpers';
 import Spinner from './common/Spinner';
 import FileUpload from './common/FileUpload';
@@ -292,9 +292,8 @@ const FortuneTeller: React.FC = () => {
         }
         
         const downloadLink = operation.response?.generatedVideos?.[0]?.video?.uri;
-        if (downloadLink && process.env.API_KEY) {
-            const response = await fetch(`${downloadLink}&key=${process.env.API_KEY}`);
-            const blob = await response.blob();
+        if (downloadLink) {
+            const blob = await fetchVideoBlob(downloadLink);
             setVideoUrl(URL.createObjectURL(blob));
         } else {
             throw new Error("Video generation completed, but no download link was found.");
@@ -461,7 +460,7 @@ const FortuneTeller: React.FC = () => {
     if (!ctx) return;
 
     const image = new Image();
-    image.crossOrigin = 'anonymous';
+    image.crossOrigin = 'anonymous'; // Important for images from other origins (like blob URLs)
     image.src = imageUrl;
 
     image.onload = () => {
@@ -471,7 +470,8 @@ const FortuneTeller: React.FC = () => {
 
         const padding = canvas.width * 0.05;
         const maxWidth = canvas.width - (padding * 2);
-        const maxHeight = canvas.height * 0.6; // Use max 60% of image height for text area
+        // Constrain the text block to be in the vertical center 70% of the image
+        const maxHeight = canvas.height * 0.7; 
 
         const wrapText = (context: CanvasRenderingContext2D, text: string, maxWidth: number): string[] => {
             const words = text.split(' ');
@@ -479,9 +479,11 @@ const FortuneTeller: React.FC = () => {
             let currentLine = words[0] || '';
             for (let i = 1; i < words.length; i++) {
                 const word = words[i];
-                const width = context.measureText(currentLine + " " + word).width;
-                if (width < maxWidth) {
-                    currentLine += " " + word;
+                const testLine = currentLine + " " + word;
+                const metrics = context.measureText(testLine);
+                const testWidth = metrics.width;
+                if (testWidth < maxWidth) {
+                    currentLine = testLine;
                 } else {
                     lines.push(currentLine);
                     currentLine = word;
@@ -491,39 +493,61 @@ const FortuneTeller: React.FC = () => {
             return lines;
         };
 
-        let fontSize = Math.max(24, canvas.width / 35);
+        let fontSize = Math.max(20, canvas.width / 30);
         let lines: string[] = [];
         let textBlockHeight = 0;
         let lineHeight = 0;
 
-        // Dynamically adjust font size to fit text within maxHeight
+        // Find the largest font size that fits within the maxHeight
         while (fontSize > 10) {
             ctx.font = `bold ${fontSize}px 'Times New Roman', serif`;
-            lineHeight = fontSize * 1.3;
-            lines = wrapText(ctx, textToOverlay, maxWidth);
-            textBlockHeight = lines.length * lineHeight;
-            if (textBlockHeight < maxHeight) {
-                break; // It fits
+            lineHeight = fontSize * 1.3; // A bit of extra spacing for readability
+            const currentLines = wrapText(ctx, textToOverlay, maxWidth);
+            const currentTextBlockHeight = currentLines.length * lineHeight;
+            if (currentTextBlockHeight < maxHeight) {
+                lines = currentLines;
+                textBlockHeight = currentTextBlockHeight;
+                break; // Found a font size that fits
             }
             fontSize -= 2; // Decrease font size and try again
         }
 
-        const rectHeight = textBlockHeight + padding;
-        const rectY = canvas.height - rectHeight - (padding / 2);
+        // If even the smallest font size overflows, use it anyway.
+        if (lines.length === 0) {
+            fontSize = 10;
+            ctx.font = `bold ${fontSize}px 'Times New Roman', serif`;
+            lineHeight = fontSize * 1.3;
+            lines = wrapText(ctx, textToOverlay, maxWidth);
+            textBlockHeight = lines.length * lineHeight;
+        }
 
-        // Draw background rectangle
+        // Center the text block vertically.
+        const rectHeight = textBlockHeight + padding; // Total height of the background rectangle
+        const rectY = (canvas.height - rectHeight) / 2; // Top position for vertical centering
+
+        // Draw the semi-transparent background rectangle for readability
         ctx.fillStyle = 'rgba(0, 0, 0, 0.65)';
+        // The rectangle starts at `padding` from the left edge and spans `maxWidth`
         ctx.fillRect(padding, rectY, maxWidth, rectHeight);
 
-        // Draw text
+        // Set text properties for drawing the fortune
         ctx.fillStyle = '#FFFFFF';
         ctx.textAlign = 'center';
         ctx.textBaseline = 'top';
+
+        // Calculate the starting Y position for the first line of text
         const textStartY = rectY + (padding / 2);
+
+        // Draw each line of text centered on the canvas
         lines.forEach((line, index) => {
-            ctx.fillText(line, canvas.width / 2, textStartY + (index * lineHeight));
+            // x-coordinate is the center of the canvas
+            const x = canvas.width / 2;
+            // y-coordinate is the start position + offset for the current line
+            const y = textStartY + (index * lineHeight);
+            ctx.fillText(line, x, y);
         });
 
+        // Trigger the download
         const dataUrl = canvas.toDataURL('image/jpeg');
         handleDownload(dataUrl, outputFilename);
     };
@@ -588,21 +612,74 @@ const FortuneTeller: React.FC = () => {
     <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="w-5 h-5"><circle cx="18" cy="5" r="3"></circle><circle cx="6" cy="12" r="3"></circle><circle cx="18" cy="19" r="3"></circle><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"></line><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"></line></svg>
   );
 
-  return (
-    <div className="max-w-4xl mx-auto p-6 bg-slate-800/50 rounded-2xl shadow-2xl shadow-indigo-900/20 border border-slate-700">
-      {showWelcome && <GuideWelcome onDismiss={handleDismissWelcome} />}
-      <div className="flex justify-between items-start mb-2">
-        <div>
-            <h2 className="text-3xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-indigo-300 to-purple-300">{t('title')}</h2>
-            <p className="text-slate-400 mt-1">{t('description')}</p>
-        </div>
-        <button onClick={() => setShowHelp(true)} title={t('help_button')} className="flex items-center gap-2 text-slate-300 bg-slate-700/50 hover:bg-slate-700 transition-colors px-3 py-2 rounded-lg border border-slate-600">
-            <HelpIcon />
-            <span>{t('help_button')}</span>
-        </button>
-      </div>
-      
-      <div className="mt-8 grid md:grid-cols-2 gap-8 items-start">
+  const renderFormView = () => (
+    <div className="mt-8">
+      {isLoading ? (
+        <Spinner text={t('spinner_unveiling')} />
+      ) : (
+        <>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-8 items-center mb-6">
+            <div>
+              <label htmlFor="birthdate" className="block text-sm font-medium text-slate-300 mb-2">{t('birthDateLabel')}</label>
+              <input
+                id="birthdate"
+                type="date"
+                value={birthDate}
+                onChange={(e) => { setBirthDate(e.target.value); setUploadedImage(null); if (userImagePreviewUrl) URL.revokeObjectURL(userImagePreviewUrl); setUserImagePreviewUrl(null); setError(null); }}
+                className="w-full bg-slate-700 border border-slate-600 rounded-md px-3 py-2 text-white focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+              />
+            </div>
+            <div>
+              {error &&
+                <div className="text-red-400 p-4 bg-red-900/50 rounded-lg flex items-center justify-center text-center">
+                  {error}
+                </div>
+              }
+            </div>
+          </div>
+
+          <div className="flex items-center text-slate-500 my-6">
+            <hr className="flex-grow border-slate-600" />
+            <span className="px-4">{t('or')}</span>
+            <hr className="flex-grow border-slate-600" />
+          </div>
+
+          <div className="space-y-6">
+            <div>
+              <FileUpload
+                onFileUpload={(file) => { handleFileUpload(file); setError(null); }}
+                accept="image/*"
+                label={t('uploadLabel')}
+              />
+              {userImagePreviewUrl && (
+                <div className="mt-4">
+                  <p className="text-sm text-center text-slate-400 mb-2">{t('image_preview')}</p>
+                  <img src={userImagePreviewUrl} alt={t('image_preview_alt')} className="rounded-lg max-h-40 mx-auto shadow-lg" />
+                </div>
+              )}
+            </div>
+            <div>
+              <label htmlFor="userName" className="block text-sm font-medium text-slate-300 mb-2">{t('name_label')}</label>
+              <input
+                id="userName"
+                type="text"
+                value={userName}
+                onChange={(e) => setUserName(e.target.value)}
+                placeholder={t('name_placeholder')}
+                className="w-full bg-slate-700 border border-slate-600 rounded-md px-3 py-2 text-white focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+              />
+            </div>
+            <button onClick={handleFortuneRequest} disabled={isLoading} className="w-full bg-gradient-to-r from-indigo-500 to-purple-600 text-white font-bold py-3 px-4 rounded-lg hover:from-indigo-600 hover:to-purple-700 transition duration-300 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center">
+              {isLoading ? t('consultingButton') : t('revealButton')}
+            </button>
+          </div>
+        </>
+      )}
+    </div>
+  );
+
+  const renderResultView = () => (
+    <div className="mt-8 grid md:grid-cols-2 gap-8 items-start">
         <div className="space-y-6">
           <div>
             <label htmlFor="birthdate" className="block text-sm font-medium text-slate-300 mb-2">{t('birthDateLabel')}</label>
@@ -648,152 +725,162 @@ const FortuneTeller: React.FC = () => {
           </button>
         </div>
         <div className="mt-8 md:mt-0">
-          {isLoading && <Spinner text={t('spinner_unveiling')} />}
-          {error && <div className="text-center text-red-400 p-4 bg-red-900/50 rounded-lg">{error}</div>}
-          
-          {!isLoading && fortuneText && (
             <div className="p-6 bg-slate-900 rounded-lg border border-slate-700 space-y-4 animate-fade-in-up">
-              <p className="text-center font-semibold text-purple-300">{currentDate}</p>
-              <h3 className="text-xl font-semibold text-indigo-300 pt-4 border-t border-slate-700">{t('guide_title', { angelName })}</h3>
-              
-              {!angelImageUrl && !isImageLoading && (
-                  <button onClick={handleGenerateImage} className="w-full text-sm bg-slate-700 text-white font-bold py-2 px-4 rounded-lg hover:bg-slate-600 transition duration-300">
-                      {t('visualize_guide_button')}
-                  </button>
-              )}
-              {isImageLoading && <Spinner text={t('generating_image')} />}
-
-              {angelImageUrl && !videoUrl && (
-                <img src={angelImageUrl} alt={`Image of ${angelName}`} className="rounded-lg w-full h-auto object-cover shadow-lg shadow-black/30" />
-              )}
-              {videoUrl && <video src={videoUrl} controls autoPlay loop className="rounded-lg w-full h-auto" />}
-              
-              <p className="text-slate-300 leading-relaxed">{fortuneText.replace(`${t('guideResponsePrefix')} ${angelName}${t('guideResponseSuffix')}`, '').trim()}</p>
-              
-              <div className="flex flex-wrap gap-4 items-center pt-4 border-t border-slate-700">
-                  {!fortuneAudio && !isAudioLoading && (
-                      <button onClick={handleGenerateAudio} className="flex items-center gap-2 text-indigo-300 hover:text-indigo-200 transition-colors">
-                          <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="w-5 h-5"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg><span>{t('listen_button')}</span>
-                      </button>
-                  )}
-                  {isAudioLoading && <Spinner text={t('generating_audio')} />}
-                  {fortuneAudio && (
-                      <button onClick={toggleAudio} className="flex items-center gap-2 text-indigo-300 hover:text-indigo-200 transition-colors">
-                          {isPlaying ? (
-                              <><svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="w-5 h-5"><rect x="6" y="4" width="4" height="16"></rect><rect x="14" y="4" width="4" height="16"></rect></svg><span>{t('pause_button')}</span></>
-                          ) : (
-                              <><svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="w-5 h-5"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg><span>{t('listen_button')}</span></>
-                          )}
-                      </button>
-                  )}
-                  {!summaryText && !isSummaryLoading && (
-                    <button onClick={handleSummarizeFortune} className="flex items-center gap-2 text-purple-300 hover:text-purple-200 transition-colors">
-                      <SummaryIcon />
-                      <span>{t('summarize_button')}</span>
+                <p className="text-center font-semibold text-purple-300">{currentDate}</p>
+                <h3 className="text-xl font-semibold text-indigo-300 pt-4 border-t border-slate-700">{t('guide_title', { angelName })}</h3>
+                
+                {!angelImageUrl && !isImageLoading && (
+                    <button onClick={handleGenerateImage} className="w-full text-sm bg-slate-700 text-white font-bold py-2 px-4 rounded-lg hover:bg-slate-600 transition duration-300">
+                        {t('visualize_guide_button')}
                     </button>
-                  )}
-                  <button onClick={handleShare} className="flex items-center gap-2 text-teal-300 hover:text-teal-200 transition-colors relative">
-                    <ShareIcon />
-                    <span>{t('share_button')}</span>
-                     {showCopySuccess && (
-                        <span className="absolute -bottom-8 left-1/2 -translate-x-1/2 bg-slate-600 text-white text-xs px-2 py-1 rounded animate-fade-in-up">
-                          {t('copy_success')}
-                        </span>
-                      )}
-                  </button>
-              </div>
-              
-              {isSummaryLoading && <Spinner text={t('summarize_loading')} />}
-              {summaryError && <p className="text-red-400 text-sm text-center mt-2">{summaryError}</p>}
-              {summaryText && (
-                  <div className="mt-4 pt-4 border-t border-slate-700/50">
-                      <h4 className="text-lg font-semibold text-purple-300">{t('summary_title')}</h4>
-                      <p className="text-slate-300 italic leading-relaxed">"{summaryText}"</p>
-                  </div>
-              )}
+                )}
+                {isImageLoading && <Spinner text={t('generating_image')} />}
 
-              {/* Download Section */}
-              {fortuneText && (
-                <div className="pt-4 border-t border-slate-700 space-y-3">
-                    <h4 className="text-sm font-semibold text-purple-300">Downloads</h4>
-                    <div className="flex flex-wrap gap-3">
-                       <button onClick={handleDownloadText} className="flex items-center gap-2 text-purple-300 hover:text-purple-200 transition-colors text-sm">
-                          <DownloadIcon />{t('download_text')}
-                       </button>
-                       {downloadableAudioUrl && fortuneAudio && (
-                          <button onClick={() => handleDownload(downloadableAudioUrl, 'fortune-audio.wav')} className="flex items-center gap-2 text-purple-300 hover:text-purple-200 transition-colors text-sm">
-                              <DownloadIcon />{t('download_audio')}
-                          </button>
-                       )}
-                       {angelImageUrl && (
-                           <button onClick={() => handleDownloadImageWithTextOverlay(angelImageUrl, fortuneText, 'fortune-image.jpg')} className="flex items-center gap-2 text-purple-300 hover:text-purple-200 transition-colors text-sm">
-                               <DownloadIcon />{t('download_image_fortune')}
-                           </button>
-                       )}
-                       {userImagePreviewUrl && (
-                            <button onClick={() => handleDownloadImageWithTextOverlay(userImagePreviewUrl, fortuneText, 'my-fortune-photo.jpg')} className="flex items-center gap-2 text-purple-300 hover:text-purple-200 transition-colors text-sm">
-                                <DownloadIcon />{t('download_user_image_fortune')}
-                            </button>
-                       )}
+                {angelImageUrl && !videoUrl && (
+                    <img src={angelImageUrl} alt={`Image of ${angelName}`} className="rounded-lg w-full h-auto object-cover shadow-lg shadow-black/30" />
+                )}
+                {videoUrl && <video src={videoUrl} controls autoPlay loop className="rounded-lg w-full h-auto" />}
+                
+                <p className="text-slate-300 leading-relaxed">{fortuneText.replace(`${t('guideResponsePrefix')} ${angelName}${t('guideResponseSuffix')}`, '').trim()}</p>
+                
+                <div className="flex flex-wrap gap-4 items-center pt-4 border-t border-slate-700">
+                    {!fortuneAudio && !isAudioLoading && (
+                        <button onClick={handleGenerateAudio} className="flex items-center gap-2 text-indigo-300 hover:text-indigo-200 transition-colors">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="w-5 h-5"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg><span>{t('listen_button')}</span>
+                        </button>
+                    )}
+                    {isAudioLoading && <Spinner text={t('generating_audio')} />}
+                    {fortuneAudio && (
+                        <button onClick={toggleAudio} className="flex items-center gap-2 text-indigo-300 hover:text-indigo-200 transition-colors">
+                            {isPlaying ? (
+                                <><svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="w-5 h-5"><rect x="6" y="4" width="4" height="16"></rect><rect x="14" y="4" width="4" height="16"></rect></svg><span>{t('pause_button')}</span></>
+                            ) : (
+                                <><svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="w-5 h-5"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg><span>{t('listen_button')}</span></>
+                            )}
+                        </button>
+                    )}
+                    {!summaryText && !isSummaryLoading && (
+                        <button onClick={handleSummarizeFortune} className="flex items-center gap-2 text-purple-300 hover:text-purple-200 transition-colors">
+                        <SummaryIcon />
+                        <span>{t('summarize_button')}</span>
+                        </button>
+                    )}
+                    <button onClick={handleShare} className="flex items-center gap-2 text-teal-300 hover:text-teal-200 transition-colors relative">
+                        <ShareIcon />
+                        <span>{t('share_button')}</span>
+                        {showCopySuccess && (
+                            <span className="absolute -bottom-8 left-1/2 -translate-x-1/2 bg-slate-600 text-white text-xs px-2 py-1 rounded animate-fade-in-up">
+                            {t('copy_success')}
+                            </span>
+                        )}
+                    </button>
+                </div>
+                
+                {isSummaryLoading && <Spinner text={t('summarize_loading')} />}
+                {summaryError && <p className="text-red-400 text-sm text-center mt-2">{summaryError}</p>}
+                {summaryText && (
+                    <div className="mt-4 pt-4 border-t border-slate-700/50">
+                        <h4 className="text-lg font-semibold text-purple-300">{t('summary_title')}</h4>
+                        <p className="text-slate-300 italic leading-relaxed">"{summaryText}"</p>
                     </div>
-                </div>
-              )}
+                )}
 
-              {angelImageUrl && !videoUrl && !isVideoLoading && (
-                  apiKeySelected ? (
-                      <button onClick={handleAnimateGuide} className="w-full mt-4 text-sm bg-gradient-to-r from-purple-600 to-rose-500 text-white font-bold py-2 px-4 rounded-lg hover:from-purple-700 hover:to-rose-600 transition duration-300">
-                          {t('animate_guide_button')}
-                      </button>
-                  ) : (
-                      <div className="text-center p-4 mt-4 bg-slate-800 rounded-lg">
-                          <p className="text-slate-300 mb-3 text-sm">{t('api_key_required')}</p>
-                          <button onClick={handleSelectKey} className="bg-indigo-500 text-white font-bold py-2 px-4 rounded-lg hover:bg-indigo-600 transition-colors text-sm">{t('select_api_key')}</button>
-                      </div>
-                  )
-              )}
-              {isVideoLoading && <Spinner text={videoLoadingMessage} />}
-              {videoError && <p className="text-red-400 text-sm text-center mt-2">{videoError}</p>}
-              {videoUrl && (
-                  <div className="text-center mt-4">
-                      <button onClick={() => handleDownload(videoUrl, 'fortune-video.mp4')} className="flex items-center justify-center w-full gap-2 text-purple-300 hover:text-purple-200 transition-colors bg-slate-800 py-2 rounded-lg">
-                         <DownloadIcon />{t('download_video')}
-                      </button>
-                  </div>
-              )}
-              
-              {/* Daily Advice Section */}
-              {fortuneText && !adviceText && !isAdviceLoading && (
-                <div className="mt-6 text-center">
-                  <button onClick={handleGetAdvice} className="bg-gradient-to-r from-yellow-500 to-orange-500 text-white font-bold py-2 px-6 rounded-lg hover:from-yellow-600 hover:to-orange-600 transition duration-300 shadow-lg">
-                    {t('get_advice_button')}
-                  </button>
-                </div>
-              )}
+                {fortuneText && (
+                    <div className="pt-4 border-t border-slate-700 space-y-3">
+                        <h4 className="text-sm font-semibold text-purple-300">Downloads</h4>
+                        <div className="flex flex-wrap gap-3">
+                        <button onClick={handleDownloadText} className="flex items-center gap-2 text-purple-300 hover:text-purple-200 transition-colors text-sm">
+                            <DownloadIcon />{t('download_text')}
+                        </button>
+                        {downloadableAudioUrl && fortuneAudio && (
+                            <button onClick={() => handleDownload(downloadableAudioUrl, 'fortune-audio.wav')} className="flex items-center gap-2 text-purple-300 hover:text-purple-200 transition-colors text-sm">
+                                <DownloadIcon />{t('download_audio')}
+                            </button>
+                        )}
+                        {angelImageUrl && (
+                            <button onClick={() => handleDownloadImageWithTextOverlay(angelImageUrl, fortuneText, 'fortune-image.jpg')} className="flex items-center gap-2 text-purple-300 hover:text-purple-200 transition-colors text-sm">
+                                <DownloadIcon />{t('download_image_fortune')}
+                            </button>
+                        )}
+                        {userImagePreviewUrl && (
+                                <button onClick={() => handleDownloadImageWithTextOverlay(userImagePreviewUrl, fortuneText, 'my-fortune-photo.jpg')} className="flex items-center gap-2 text-purple-300 hover:text-purple-200 transition-colors text-sm">
+                                    <DownloadIcon />{t('download_user_image_fortune')}
+                                </button>
+                        )}
+                        </div>
+                    </div>
+                )}
 
-              {isAdviceLoading && <Spinner text={t('advice_loading')} />}
-              {adviceError && <div className="mt-4 text-center text-red-400 p-3 bg-red-900/50 rounded-lg">{adviceError}</div>}
-              
-              {adviceText && (
-                <div className="mt-6 pt-6 border-t border-slate-700 space-y-3">
-                  <h4 className="text-lg font-semibold text-yellow-300 text-center">{t('advice_title')}</h4>
-                  <div className="text-slate-300 leading-relaxed whitespace-pre-wrap">{adviceText}</div>
-                  {adviceAudio && (
-                     <button onClick={toggleAdviceAudio} className="flex items-center gap-2 text-yellow-300 hover:text-yellow-200 transition-colors">
-                      {isAdvicePlaying ? (
-                        <><svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="w-5 h-5"><rect x="6" y="4" width="4" height="16"></rect><rect x="14" y="4" width="4" height="16"></rect></svg><span>{t('pause_advice')}</span></>
-                      ) : (
-                        <><svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="w-5 h-5"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg><span>{t('listen_advice')}</span></>
-                      )}
-                     </button>
-                  )}
-                </div>
-              )}
+                {angelImageUrl && !videoUrl && !isVideoLoading && (
+                    apiKeySelected ? (
+                        <button onClick={handleAnimateGuide} className="w-full mt-4 text-sm bg-gradient-to-r from-purple-600 to-rose-500 text-white font-bold py-2 px-4 rounded-lg hover:from-purple-700 hover:to-rose-600 transition duration-300">
+                            {t('animate_guide_button')}
+                        </button>
+                    ) : (
+                        <div className="text-center p-4 mt-4 bg-slate-800 rounded-lg">
+                            <p className="text-slate-300 mb-3 text-sm">{t('api_key_required')}</p>
+                            <button onClick={handleSelectKey} className="bg-indigo-500 text-white font-bold py-2 px-4 rounded-lg hover:bg-indigo-600 transition-colors text-sm">{t('select_api_key')}</button>
+                        </div>
+                    )
+                )}
+                {isVideoLoading && <Spinner text={videoLoadingMessage} />}
+                {videoError && <p className="text-red-400 text-sm text-center mt-2">{videoError}</p>}
+                {videoUrl && (
+                    <div className="text-center mt-4">
+                        <button onClick={() => handleDownload(videoUrl, 'fortune-video.mp4')} className="flex items-center justify-center w-full gap-2 text-purple-300 hover:text-purple-200 transition-colors bg-slate-800 py-2 rounded-lg">
+                            <DownloadIcon />{t('download_video')}
+                        </button>
+                    </div>
+                )}
+                
+                {fortuneText && !adviceText && !isAdviceLoading && (
+                    <div className="mt-6 text-center">
+                    <button onClick={handleGetAdvice} className="bg-gradient-to-r from-yellow-500 to-orange-500 text-white font-bold py-2 px-6 rounded-lg hover:from-yellow-600 hover:to-orange-600 transition duration-300 shadow-lg">
+                        {t('get_advice_button')}
+                    </button>
+                    </div>
+                )}
 
+                {isAdviceLoading && <Spinner text={t('advice_loading')} />}
+                {adviceError && <div className="mt-4 text-center text-red-400 p-3 bg-red-900/50 rounded-lg">{adviceError}</div>}
+                
+                {adviceText && (
+                    <div className="mt-6 pt-6 border-t border-slate-700 space-y-3">
+                    <h4 className="text-lg font-semibold text-yellow-300 text-center">{t('advice_title')}</h4>
+                    <div className="text-slate-300 leading-relaxed whitespace-pre-wrap">{adviceText}</div>
+                    {adviceAudio && (
+                        <button onClick={toggleAdviceAudio} className="flex items-center gap-2 text-yellow-300 hover:text-yellow-200 transition-colors">
+                        {isAdvicePlaying ? (
+                            <><svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="w-5 h-5"><rect x="6" y="4" width="4" height="16"></rect><rect x="14" y="4" width="4" height="16"></rect></svg><span>{t('pause_advice')}</span></>
+                        ) : (
+                            <><svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="w-5 h-5"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg><span>{t('listen_advice')}</span></>
+                        )}
+                        </button>
+                    )}
+                    </div>
+                )}
             </div>
-          )}
         </div>
+    </div>
+  );
+
+  return (
+    <div className="max-w-4xl mx-auto p-6 bg-slate-800/50 rounded-2xl shadow-2xl shadow-indigo-900/20 border border-slate-700">
+      {showWelcome && <GuideWelcome onDismiss={handleDismissWelcome} />}
+      <div className="flex justify-between items-start mb-2">
+        <div>
+            <h2 className="text-3xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-indigo-300 to-purple-300">{t('title')}</h2>
+            <p className="text-slate-400 mt-1">{t('description')}</p>
+        </div>
+        <button onClick={() => setShowHelp(true)} title={t('help_button')} className="flex items-center gap-2 text-slate-300 bg-slate-700/50 hover:bg-slate-700 transition-colors px-3 py-2 rounded-lg border border-slate-600">
+            <HelpIcon />
+            <span>{t('help_button')}</span>
+        </button>
       </div>
-       {showHelp && (
+      
+      {fortuneText ? renderResultView() : renderFormView()}
+
+      {showHelp && (
         <div className="fixed inset-0 bg-black/70 z-50 flex items-center justify-center p-4 animate-fade-in-up" style={{ animationDuration: '0.3s' }}>
             <div className="bg-slate-800 border border-slate-700 rounded-2xl p-6 max-w-lg w-full relative shadow-2xl shadow-indigo-900/40">
                 <h3 className="text-xl font-bold text-indigo-300 mb-4">{t('help_modal_title')}</h3>
